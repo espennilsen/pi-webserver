@@ -14,7 +14,7 @@ The extension auto-discovers via the `pi` manifest in `package.json`.
 
 **Auth:** `/web auth <password|user:pass|off>` — Optional Basic auth for all endpoints. Also configurable via `PI_WEB_AUTH` env var.
 
-**API routes:** `/web api <token|off|status>` — Token-protected `/api/*` namespace. Also configurable via `API_TOKEN` env var. When a token is set, `/api/*` requires `Authorization: Bearer <token>`. When not set, `/api/*` is open.
+**API routes:** `/web api <token|read <token>|off|status>` — Token-protected `/api/*` namespace. Env vars: `API_TOKEN` (full access), `API_READ_TOKEN` (GET/HEAD only). When a token is set, `/api/*` requires `Authorization: Bearer <token>`. When not set, `/api/*` is open.
 
 **Events (via `pi.events`):**
 - Listens for `web:mount`, `web:unmount`, `web:mount-api`, `web:unmount-api` from other extensions
@@ -57,7 +57,7 @@ import { json, readBody } from "pi-webserver/src/helpers.ts";
 
 // Prefix is relative to /api — this mounts at /api/my-ext
 mountApi({
-  name: "my-ext",
+  name: "my-ext-api",
   label: "My Extension API",
   prefix: "/my-ext",
   handler: (req, res, path) => {
@@ -70,8 +70,30 @@ Or via the event bus:
 
 ```typescript
 pi.events.on("web:ready", () => {
-  pi.events.emit("web:mount-api", { name: "my-ext", prefix: "/my-ext", handler: ... });
+  pi.events.emit("web:mount-api", { name: "my-ext-api", prefix: "/my-ext", handler: ... });
 });
 ```
 
-Callers authenticate with `Authorization: Bearer <token>` when `API_TOKEN` is set. When no token is configured, `/api/*` routes are open.
+**Auth behavior:**
+- `API_TOKEN` → full access (all methods)
+- `API_READ_TOKEN` → read-only access (GET/HEAD only)
+- Neither set → `/api/*` is open
+
+**Custom auth:** Extensions can bypass built-in token auth and handle authentication themselves by setting `skipAuth: true`:
+
+```typescript
+mountApi({
+  name: "my-ext-api",
+  label: "My Extension API",
+  prefix: "/my-ext",
+  skipAuth: true,
+  handler: (req, res, path) => {
+    // Extension handles its own auth here
+    if (!myCustomAuthCheck(req)) {
+      json(res, 401, { error: "Unauthorized" });
+      return;
+    }
+    json(res, 200, { hello: "world" });
+  },
+});
+```

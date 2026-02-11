@@ -29,6 +29,8 @@ export interface MountConfig {
 	prefix: string;
 	/** Request handler — receives (req, res, subPath) with prefix stripped */
 	handler: RouteHandler;
+	/** Skip built-in API token auth — extension handles its own authentication */
+	skipAuth?: boolean;
 }
 
 export interface MountInfo {
@@ -36,6 +38,7 @@ export interface MountInfo {
 	label: string;
 	description?: string;
 	prefix: string;
+	skipAuth?: boolean;
 }
 
 // ── State ───────────────────────────────────────────────────────
@@ -45,6 +48,7 @@ let serverPort: number | null = null;
 const mounts = new Map<string, MountConfig>();
 let authCredentials: { username: string; password: string } | null = null;
 let apiToken: string | null = null;
+let apiReadToken: string | null = null;
 
 // ── Mount Management ────────────────────────────────────────────
 
@@ -74,6 +78,7 @@ export function getMounts(): MountInfo[] {
 		label: m.label ?? m.name,
 		description: m.description,
 		prefix: m.prefix,
+		skipAuth: m.skipAuth || undefined,
 	}));
 }
 
@@ -120,29 +125,49 @@ export function getAuth(): { username: string; enabled: true } | { enabled: fals
 
 // ── API Token Auth ──────────────────────────────────────────────
 
-/** Set the API bearer token. Pass null to disable. */
+/** Set the API bearer token (full access). Pass null to disable. */
 export function setApiToken(token: string | null): void {
 	apiToken = token;
 }
 
-/** Returns whether API token auth is enabled. Never exposes the token. */
-export function getApiTokenStatus(): { enabled: boolean } {
-	return { enabled: apiToken !== null };
+/** Set the API read-only bearer token (GET/HEAD only). Pass null to disable. */
+export function setApiReadToken(token: string | null): void {
+	apiReadToken = token;
 }
 
-/** Check Bearer token for /api/* paths. Returns true if OK (or token not configured). */
+/** Returns status of API token auth. Never exposes tokens. */
+export function getApiTokenStatus(): { enabled: boolean; readEnabled: boolean } {
+	return { enabled: apiToken !== null, readEnabled: apiReadToken !== null };
+}
+
+/**
+ * Check Bearer token for /api/* paths. Returns true if OK.
+ *
+ * - No tokens configured → open (allow all)
+ * - API_TOKEN matches → allow all methods
+ * - API_READ_TOKEN matches → allow GET/HEAD only
+ * - Otherwise → 401/403
+ */
 function checkApiAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-	if (!apiToken) return true;
+	if (!apiToken && !apiReadToken) return true;
 
 	const header = req.headers.authorization;
-	if (header?.startsWith("Bearer ")) {
-		const token = header.slice(7);
-		if (token === apiToken) return true;
+	const bearer = header?.startsWith("Bearer ") ? header.slice(7) : null;
+	const isRead = req.method === "GET" || req.method === "HEAD";
+
+	// Full token grants everything
+	if (apiToken && bearer === apiToken) return true;
+
+	// Read token grants GET/HEAD only
+	if (apiReadToken && bearer === apiReadToken) {
+		if (isRead) return true;
+
+		res.writeHead(403, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ error: "Read-only token cannot be used for write requests" }));
+		return false;
 	}
 
-	res.writeHead(401, {
-		"Content-Type": "application/json",
-	});
+	res.writeHead(401, { "Content-Type": "application/json" });
 	res.end(JSON.stringify({ error: "Invalid or missing API token" }));
 	return false;
 }
@@ -214,22 +239,23 @@ export function start(port: number = 4100): string {
 		}
 
 		// Auth gate (after CORS preflight so OPTIONS still works)
-		// /api/* uses Bearer token auth; everything else uses Basic auth
+		// /api/* auth is deferred to after mount matching (supports skipAuth)
+		// Everything else uses Basic auth upfront
 		const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
-		if (isApiPath) {
-			if (!checkApiAuth(req, res)) return;
-		} else {
+		if (!isApiPath) {
 			if (!checkAuth(req, res)) return;
 		}
 
 		try {
-			// API listing
+			// API listing — always requires token auth
 			if (pathname === "/api" || pathname === "/api/") {
+				if (!checkApiAuth(req, res)) return;
 				const apiMounts = getApiMounts();
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({
 					mounts: apiMounts,
-					authenticated: apiToken !== null,
+					tokenAuth: apiToken !== null,
+					readTokenAuth: apiReadToken !== null,
 				}));
 				return;
 			}
@@ -260,9 +286,18 @@ export function start(port: number = 4100): string {
 			}
 
 			if (bestMatch) {
+				// API token auth — skip if mount handles its own
+				if (isApiPath && !bestMatch.skipAuth) {
+					if (!checkApiAuth(req, res)) return;
+				}
 				const subPath = pathname.slice(bestMatch.prefix.length) || "/";
 				await bestMatch.handler(req, res, subPath);
 				return;
+			}
+
+			// Unmatched API paths still go through token auth before 404
+			if (isApiPath) {
+				if (!checkApiAuth(req, res)) return;
 			}
 
 			// Nothing matched
