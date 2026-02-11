@@ -105,6 +105,10 @@ export function getApiMounts(): MountInfo[] {
 	return getMounts().filter((m) => m.prefix.startsWith("/api"));
 }
 
+function getDashboardMounts(): MountInfo[] {
+	return getMounts().filter((m) => !m.prefix.startsWith("/api"));
+}
+
 // ── Auth ────────────────────────────────────────────────────────
 
 /**
@@ -275,6 +279,13 @@ export function start(port: number = 4100): string {
 			if (pathname === "/_api/mounts") {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(getMounts()));
+				return;
+			}
+
+			// Meta API: list mounts for dashboard (exclude /api)
+			if (pathname === "/_api/mounts/dashboard") {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(getDashboardMounts()));
 				return;
 			}
 
