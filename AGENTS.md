@@ -14,11 +14,13 @@ The extension auto-discovers via the `pi` manifest in `package.json`.
 
 **Auth:** `/web auth <password|user:pass|off>` — Optional Basic auth for all endpoints. Also configurable via `PI_WEB_AUTH` env var.
 
+**API routes:** `/web api <token|off|status>` — Token-protected `/api/*` namespace. Also configurable via `API_TOKEN` env var. When a token is set, `/api/*` requires `Authorization: Bearer <token>`. When not set, `/api/*` is open.
+
 **Events (via `pi.events`):**
-- Listens for `web:mount` and `web:unmount` from other extensions
+- Listens for `web:mount`, `web:unmount`, `web:mount-api`, `web:unmount-api` from other extensions
 - Emits `web:ready` on session start
 
-**Dashboard:** Root URL (`/`) shows all mounted extensions with links.
+**Dashboard:** Root URL (`/`) shows all mounted extensions with links. `/api` returns a JSON listing of API mounts.
 
 ## Mounting routes from another extension
 
@@ -44,3 +46,32 @@ pi.events.on("web:ready", () => {
   pi.events.emit("web:mount", { name: "my-ext", prefix: "/my-ext", handler: ... });
 });
 ```
+
+## Mounting API routes (token-protected)
+
+API routes live under `/api/*` and use Bearer token auth (when `API_TOKEN` is set).
+
+```typescript
+import { mountApi } from "pi-webserver/src/server.ts";
+import { json, readBody } from "pi-webserver/src/helpers.ts";
+
+// Prefix is relative to /api — this mounts at /api/my-ext
+mountApi({
+  name: "my-ext",
+  label: "My Extension API",
+  prefix: "/my-ext",
+  handler: (req, res, path) => {
+    json(res, 200, { hello: "world" });
+  },
+});
+```
+
+Or via the event bus:
+
+```typescript
+pi.events.on("web:ready", () => {
+  pi.events.emit("web:mount-api", { name: "my-ext", prefix: "/my-ext", handler: ... });
+});
+```
+
+Callers authenticate with `Authorization: Bearer <token>` when `API_TOKEN` is set. When no token is configured, `/api/*` routes are open.

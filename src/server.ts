@@ -44,6 +44,7 @@ let server: http.Server | null = null;
 let serverPort: number | null = null;
 const mounts = new Map<string, MountConfig>();
 let authCredentials: { username: string; password: string } | null = null;
+let apiToken: string | null = null;
 
 // ── Mount Management ────────────────────────────────────────────
 
@@ -76,6 +77,28 @@ export function getMounts(): MountInfo[] {
 	}));
 }
 
+// ── API Mount Management ────────────────────────────────────────
+
+/**
+ * Mount an API handler under /api. The prefix is relative to /api.
+ * e.g. mountApi({ prefix: "/chat", ... }) mounts at /api/chat
+ */
+export function mountApi(config: MountConfig): void {
+	let prefix = config.prefix.replace(/\/+$/, "");
+	if (!prefix.startsWith("/")) prefix = "/" + prefix;
+	mount({ ...config, prefix: "/api" + prefix });
+}
+
+/** Remove an API mount by name. Returns true if it existed. */
+export function unmountApi(name: string): boolean {
+	return unmount(name);
+}
+
+/** List only API mounts (prefixed with /api). */
+export function getApiMounts(): MountInfo[] {
+	return getMounts().filter((m) => m.prefix.startsWith("/api"));
+}
+
 // ── Auth ────────────────────────────────────────────────────────
 
 /**
@@ -93,6 +116,35 @@ export function setAuth(config: { username?: string; password: string } | null):
 export function getAuth(): { username: string; enabled: true } | { enabled: false } {
 	if (!authCredentials) return { enabled: false };
 	return { username: authCredentials.username, enabled: true };
+}
+
+// ── API Token Auth ──────────────────────────────────────────────
+
+/** Set the API bearer token. Pass null to disable. */
+export function setApiToken(token: string | null): void {
+	apiToken = token;
+}
+
+/** Returns whether API token auth is enabled. Never exposes the token. */
+export function getApiTokenStatus(): { enabled: boolean } {
+	return { enabled: apiToken !== null };
+}
+
+/** Check Bearer token for /api/* paths. Returns true if OK (or token not configured). */
+function checkApiAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+	if (!apiToken) return true;
+
+	const header = req.headers.authorization;
+	if (header?.startsWith("Bearer ")) {
+		const token = header.slice(7);
+		if (token === apiToken) return true;
+	}
+
+	res.writeHead(401, {
+		"Content-Type": "application/json",
+	});
+	res.end(JSON.stringify({ error: "Invalid or missing API token" }));
+	return false;
 }
 
 /** Check Basic auth. Returns true if OK (or auth is disabled). */
@@ -162,9 +214,26 @@ export function start(port: number = 4100): string {
 		}
 
 		// Auth gate (after CORS preflight so OPTIONS still works)
-		if (!checkAuth(req, res)) return;
+		// /api/* uses Bearer token auth; everything else uses Basic auth
+		const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+		if (isApiPath) {
+			if (!checkApiAuth(req, res)) return;
+		} else {
+			if (!checkAuth(req, res)) return;
+		}
 
 		try {
+			// API listing
+			if (pathname === "/api" || pathname === "/api/") {
+				const apiMounts = getApiMounts();
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({
+					mounts: apiMounts,
+					authenticated: apiToken !== null,
+				}));
+				return;
+			}
+
 			// Dashboard
 			if (pathname === "/" || pathname === "") {
 				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
