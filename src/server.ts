@@ -141,13 +141,12 @@ export function getApiTokenStatus(): { enabled: boolean; readEnabled: boolean } 
 	return { enabled: apiToken !== null, readEnabled: apiReadToken !== null };
 }
 
-/** Constant-time token comparison. Returns false if either is null. */
+/** Constant-time token comparison. Hashes both inputs so digest length is always equal. */
 function tokensEqual(a: string | null, b: string | null): boolean {
 	if (!a || !b) return false;
-	const bufA = Buffer.from(a);
-	const bufB = Buffer.from(b);
-	if (bufA.length !== bufB.length) return false;
-	return crypto.timingSafeEqual(bufA, bufB);
+	const hashA = crypto.createHash("sha256").update(a).digest();
+	const hashB = crypto.createHash("sha256").update(b).digest();
+	return crypto.timingSafeEqual(hashA, hashB);
 }
 
 /**
