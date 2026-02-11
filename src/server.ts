@@ -7,6 +7,7 @@
  */
 
 import * as http from "node:http";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -140,6 +141,15 @@ export function getApiTokenStatus(): { enabled: boolean; readEnabled: boolean } 
 	return { enabled: apiToken !== null, readEnabled: apiReadToken !== null };
 }
 
+/** Constant-time token comparison. Returns false if either is null. */
+function tokensEqual(a: string | null, b: string | null): boolean {
+	if (!a || !b) return false;
+	const bufA = Buffer.from(a);
+	const bufB = Buffer.from(b);
+	if (bufA.length !== bufB.length) return false;
+	return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /**
  * Check Bearer token for /api/* paths. Returns true if OK.
  *
@@ -156,10 +166,10 @@ function checkApiAuth(req: http.IncomingMessage, res: http.ServerResponse): bool
 	const isRead = req.method === "GET" || req.method === "HEAD";
 
 	// Full token grants everything
-	if (apiToken && bearer === apiToken) return true;
+	if (tokensEqual(bearer, apiToken)) return true;
 
 	// Read token grants GET/HEAD only
-	if (apiReadToken && bearer === apiReadToken) {
+	if (tokensEqual(bearer, apiReadToken)) {
 		if (isRead) return true;
 
 		res.writeHead(403, { "Content-Type": "application/json" });
