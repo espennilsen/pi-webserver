@@ -257,16 +257,11 @@ export function start(port: number = 4100): string {
 		}
 
 		try {
-			// API listing — always requires token auth
+			// /api base path — no listing, just 404
 			if (pathname === "/api" || pathname === "/api/") {
 				if (!checkApiAuth(req, res)) return;
-				const apiMounts = getApiMounts();
-				res.writeHead(200, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({
-					mounts: apiMounts,
-					tokenAuth: apiToken !== null,
-					readTokenAuth: apiReadToken !== null,
-				}));
+				res.writeHead(404, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ error: "Not found" }));
 				return;
 			}
 

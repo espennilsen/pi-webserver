@@ -28,7 +28,7 @@ pi install git@github.com:espennilsen/pi-webserver.git
 | `/web api off` | Disable API token auth |
 | `/web api` | Show API token status and mounts |
 
-The dashboard at `http://localhost:4100/` lists all mounted extensions with links. `GET /api` returns a JSON listing of API mounts.
+The dashboard at `http://localhost:4100/` lists all mounted extensions with links.
 
 ### Auth
 
@@ -223,7 +223,6 @@ import { readBody, json, html, csv, notFound, badRequest, serverError } from "pi
 
 - `/` serves the dashboard (Basic auth)
 - `/_api/mounts` returns the mount list as JSON (Basic auth)
-- `/api` returns a JSON listing of API mounts (token auth)
 - `/api/*` routes use Bearer token auth (unless mount has `skipAuth: true`)
 - All other routes use Basic auth (if configured)
 - Requests match against mount prefixes (longest prefix wins)

@@ -20,7 +20,7 @@ The extension auto-discovers via the `pi` manifest in `package.json`.
 - Listens for `web:mount`, `web:unmount`, `web:mount-api`, `web:unmount-api` from other extensions
 - Emits `web:ready` on session start
 
-**Dashboard:** Root URL (`/`) shows all mounted extensions with links. `/api` returns a JSON listing of API mounts.
+**Dashboard:** Root URL (`/`) shows all mounted extensions with links.
 
 ## Mounting routes from another extension
 
