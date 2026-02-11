@@ -46,7 +46,7 @@
 (async () => {
   const el = document.getElementById("mounts");
   try {
-    const res = await fetch("/_api/mounts");
+    const res = await fetch("/_api/mounts/dashboard");
     const mounts = await res.json();
 
     if (mounts.length === 0) {

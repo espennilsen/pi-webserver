@@ -275,8 +275,15 @@ export function start(port: number = 4100): string {
 				return;
 			}
 
-			// Meta API: list mounts (exclude /api from dashboard)
+			// Meta API: list mounts
 			if (pathname === "/_api/mounts") {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify(getMounts()));
+				return;
+			}
+
+			// Meta API: list mounts for dashboard (exclude /api)
+			if (pathname === "/_api/mounts/dashboard") {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(getDashboardMounts()));
 				return;
