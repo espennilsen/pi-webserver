@@ -10,7 +10,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { start, stop, mount, unmount, isRunning, getUrl, getPort, getMounts, setAuth, getAuth } from "./server.ts";
+import { start, stop, mount, unmount, mountApi, unmountApi, isRunning, getUrl, getPort, getMounts, getApiMounts, setAuth, getAuth, setApiToken, setApiReadToken, getApiTokenStatus } from "./server.ts";
 import type { MountConfig } from "./server.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -25,6 +25,14 @@ export default function (pi: ExtensionAPI) {
 		unmount((data as { name: string }).name);
 	});
 
+	pi.events.on("web:mount-api", (config: unknown) => {
+		mountApi(config as MountConfig);
+	});
+
+	pi.events.on("web:unmount-api", (data: unknown) => {
+		unmountApi((data as { name: string }).name);
+	});
+
 	// ── /web command ─────────────────────────────────────────────
 
 	pi.registerCommand("web", {
@@ -35,6 +43,7 @@ export default function (pi: ExtensionAPI) {
 				{ value: "status", label: "status — Show server status and mounts" },
 				{ value: "port", label: "port [number] — Show or change the server port" },
 				{ value: "auth", label: "auth <password|user:pass|off> — Configure Basic auth" },
+				{ value: "api", label: "api [token|read <token>|off|status] — Configure API token auth" },
 			];
 			const filtered = items.filter((i) => i.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
@@ -81,6 +90,55 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			// /web api [token|read <token>|off|status]
+			if (arg === "api" || arg.startsWith("api ")) {
+				const apiArg = arg.slice(4).trim();
+				if (!apiArg || apiArg === "status") {
+					const tokenStatus = getApiTokenStatus();
+					const apiMounts = getApiMounts();
+					let msg = `API token: ${tokenStatus.enabled ? "enabled" : "disabled"}`;
+					msg += `\nAPI read token: ${tokenStatus.readEnabled ? "enabled" : "disabled"}`;
+					if (apiMounts.length > 0) {
+						msg += `\nAPI mounts (${apiMounts.length}):`;
+						for (const m of apiMounts) {
+							msg += `\n  ${m.prefix} — ${m.label}`;
+							if (m.skipAuth) msg += " (custom auth)";
+							if (m.description) msg += ` (${m.description})`;
+						}
+					} else {
+						msg += "\nNo API extensions mounted";
+					}
+					ctx.ui.notify(msg, "info");
+					return;
+				}
+				if (apiArg === "off") {
+					setApiToken(null);
+					setApiReadToken(null);
+					ctx.ui.notify("API token auth disabled — /api/* routes are open", "info");
+					return;
+				}
+				// /web api read <token|off>
+				if (apiArg === "read" || apiArg.startsWith("read ")) {
+					const readArg = apiArg.slice(5).trim();
+					if (!readArg) {
+						const tokenStatus = getApiTokenStatus();
+						ctx.ui.notify(`API read token: ${tokenStatus.readEnabled ? "enabled" : "disabled"}`, "info");
+						return;
+					}
+					if (readArg === "off") {
+						setApiReadToken(null);
+						ctx.ui.notify("API read token disabled", "info");
+						return;
+					}
+					setApiReadToken(readArg);
+					ctx.ui.notify("API read token enabled — GET/HEAD on /api/* allowed with this token", "info");
+					return;
+				}
+				setApiToken(apiArg);
+				ctx.ui.notify("API token auth enabled — /api/* requires Bearer token", "info");
+				return;
+			}
+
 			// /web port [number]
 			if (arg === "port" || arg.startsWith("port ")) {
 				const portArg = arg.slice(5).trim();
@@ -110,8 +168,11 @@ export default function (pi: ExtensionAPI) {
 				}
 				const mountList = getMounts();
 				const auth = getAuth();
+				const tokenStatus = getApiTokenStatus();
 				let msg = `Web server running at ${getUrl()}`;
 				msg += `\nAuth: ${auth.enabled ? `enabled (user: ${auth.username})` : "disabled"}`;
+				msg += `\nAPI token: ${tokenStatus.enabled ? "enabled" : "disabled"}`;
+				msg += `\nAPI read token: ${tokenStatus.readEnabled ? "enabled" : "disabled"}`;
 				if (mountList.length > 0) {
 					msg += "\nMounts:";
 					for (const m of mountList) {
@@ -145,7 +206,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Lifecycle ────────────────────────────────────────────────
 
-	// Pick up auth from env var and notify other extensions
+	// Pick up auth from env vars and notify other extensions
 	pi.on("session_start", async (_event, ctx) => {
 		const envAuth = process.env.PI_WEB_AUTH;
 		if (envAuth) {
@@ -156,6 +217,18 @@ export default function (pi: ExtensionAPI) {
 				setAuth({ password: envAuth });
 			}
 			ctx.ui.notify("Web server auth configured from PI_WEB_AUTH", "info");
+		}
+
+		const envApiToken = process.env.API_TOKEN;
+		if (envApiToken) {
+			setApiToken(envApiToken);
+			ctx.ui.notify("API token auth configured from API_TOKEN", "info");
+		}
+
+		const envApiReadToken = process.env.API_READ_TOKEN;
+		if (envApiReadToken) {
+			setApiReadToken(envApiReadToken);
+			ctx.ui.notify("API read token configured from API_READ_TOKEN", "info");
 		}
 
 		pi.events.emit("web:ready", {});

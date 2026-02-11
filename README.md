@@ -23,19 +23,35 @@ pi install git@github.com:espennilsen/pi-webserver.git
 | `/web auth <password>` | Enable Basic auth (username: `pi`) |
 | `/web auth <user:pass>` | Enable Basic auth with custom username |
 | `/web auth off` | Disable auth |
+| `/web api <token>` | Set API bearer token (full access) |
+| `/web api read <token>` | Set API read-only token (GET/HEAD only) |
+| `/web api off` | Disable API token auth |
+| `/web api` | Show API token status and mounts |
 
 The dashboard at `http://localhost:4100/` lists all mounted extensions with links.
 
 ### Auth
 
-Basic auth protects all endpoints. Browsers prompt natively; API clients send the `Authorization` header. CORS preflight requests pass through without auth.
-
-Configure via command (`/web auth secret`), environment variable, or programmatically:
+**Basic auth** protects all non-API endpoints. Browsers prompt natively; API clients send the `Authorization` header. CORS preflight requests pass through without auth.
 
 ```bash
 export PI_WEB_AUTH=mypassword        # username defaults to "pi"
 export PI_WEB_AUTH=admin:s3cret      # custom username
 ```
+
+**API token auth** protects `/api/*` routes with Bearer tokens, separate from Basic auth:
+
+```bash
+export API_TOKEN=my-secret-token     # full access (all methods)
+export API_READ_TOKEN=my-read-token  # read-only access (GET/HEAD only)
+```
+
+- `API_TOKEN` grants access to all HTTP methods
+- `API_READ_TOKEN` grants access to GET and HEAD only (403 on write attempts)
+- Neither set → `/api/*` is open
+- A read token on a POST/PUT/DELETE returns `403 Read-only token cannot be used for write requests`
+
+Clients authenticate with `Authorization: Bearer <token>`.
 
 ## Mounting routes
 
@@ -80,12 +96,70 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+## Mounting API routes
+
+API routes live under `/api/*` and use Bearer token auth instead of Basic auth.
+
+### Direct import
+
+```typescript
+import { mountApi } from "pi-webserver/src/server.ts";
+import { json } from "pi-webserver/src/helpers.ts";
+
+// Prefix is relative to /api — this mounts at /api/my-ext
+mountApi({
+  name: "my-ext-api",
+  label: "My Extension API",
+  prefix: "/my-ext",
+  handler: (req, res, path) => {
+    json(res, 200, { hello: "world" });
+  },
+});
+```
+
+### Event bus
+
+```typescript
+pi.events.on("web:ready", () => {
+  pi.events.emit("web:mount-api", {
+    name: "my-ext-api",
+    prefix: "/my-ext",
+    handler: (req, res, path) => { ... },
+  });
+});
+```
+
+### Custom auth
+
+Extensions can bypass built-in token auth and handle authentication themselves:
+
+```typescript
+mountApi({
+  name: "my-ext-api",
+  prefix: "/my-ext",
+  skipAuth: true,
+  handler: (req, res, path) => {
+    if (!myOwnAuthCheck(req)) {
+      json(res, 401, { error: "Unauthorized" });
+      return;
+    }
+    json(res, 200, { data: "secret" });
+  },
+});
+```
+
 ## API
 
 ### Server
 
 ```typescript
-import { mount, unmount, getMounts, start, stop, isRunning, getUrl, setAuth, getAuth } from "pi-webserver/src/server.ts";
+import {
+  mount, unmount, getMounts,
+  mountApi, unmountApi, getApiMounts,
+  start, stop, isRunning, getUrl,
+  setAuth, getAuth,
+  setApiToken, setApiReadToken, getApiTokenStatus,
+} from "pi-webserver/src/server.ts";
 ```
 
 | Function | Description |
@@ -93,12 +167,18 @@ import { mount, unmount, getMounts, start, stop, isRunning, getUrl, setAuth, get
 | `mount(config)` | Register a route handler at a prefix |
 | `unmount(name)` | Remove a route handler |
 | `getMounts()` | List all mounts (without handlers) |
+| `mountApi(config)` | Mount under `/api` (prefix is relative) |
+| `unmountApi(name)` | Remove an API mount |
+| `getApiMounts()` | List only `/api/*` mounts |
 | `start(port?)` | Start the server (default: 4100) |
 | `stop()` | Stop the server |
 | `isRunning()` | Check if the server is running |
 | `getUrl()` | Get the server URL, or null |
 | `setAuth(config)` | Enable/disable Basic auth |
 | `getAuth()` | Get auth status (never exposes password) |
+| `setApiToken(token)` | Set API bearer token (full access), null to disable |
+| `setApiReadToken(token)` | Set API read-only token (GET/HEAD), null to disable |
+| `getApiTokenStatus()` | Get API token status (`{ enabled, readEnabled }`) |
 
 ### Helpers
 
@@ -123,6 +203,8 @@ import { readBody, json, html, csv, notFound, badRequest, serverError } from "pi
 | `web:ready` | ← webserver emits on session start | `{}` |
 | `web:mount` | → webserver listens | `MountConfig` |
 | `web:unmount` | → webserver listens | `{ name: string }` |
+| `web:mount-api` | → webserver listens | `MountConfig` |
+| `web:unmount-api` | → webserver listens | `{ name: string }` |
 
 ### MountConfig
 
@@ -133,14 +215,17 @@ import { readBody, json, html, csv, notFound, badRequest, serverError } from "pi
   description?: string; // Shown on dashboard
   prefix: string;       // URL prefix (e.g. "/crm")
   handler: (req, res, path) => void | Promise<void>;
+  skipAuth?: boolean;   // Skip built-in API token auth (handle your own)
 }
 ```
 
 ## How routing works
 
-- `/` serves the dashboard
-- `/_api/mounts` returns the mount list as JSON
-- All other requests match against mount prefixes (longest prefix wins)
+- `/` serves the dashboard (Basic auth)
+- `/_api/mounts` returns the mount list as JSON (Basic auth)
+- `/api/*` routes use Bearer token auth (unless mount has `skipAuth: true`)
+- All other routes use Basic auth (if configured)
+- Requests match against mount prefixes (longest prefix wins)
 - The prefix is stripped before calling the handler
 - Unmatched requests get a 404
 
